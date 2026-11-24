@@ -1,0 +1,15 @@
+# External recipes clone (data source, not part of the repo)
+bioconda-recipes/
+
+# ExtUtils::MakeMaker build artifacts
+/blib/
+/Makefile
+/Makefile.old
+/pm_to_blib
+/MYMETA.*
+/Bioconda-Packages-*
+
+# Editor / OS cruft
+*.bak
+*~
+.DS_Store
