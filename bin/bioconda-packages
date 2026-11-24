@@ -19,28 +19,35 @@ bioconda-packages - Query the bundled Bioconda package database from the command
     bioconda-packages rdeps zlib              # reverse deps (--kind run|host|build|all)
     bioconda-packages removed
     bioconda-packages stats
+    bioconda-packages version                 # tool + database version
 
 =head1 OPTIONS
 
     --db PATH         Use a specific database file
     --kind KIND       Dependency kind for 'deps'/'rdeps' (run|host|build|all)
     --all             Include removed packages (search/list/rdeps)
+    --version, -V     Print the tool and database version
     --help            This message
 
 =cut
 
 my %opt = (kind => undef, all => 0);
 GetOptions(
-    'db=s'   => \$opt{db},
-    'kind=s' => \$opt{kind},
-    'all'    => \$opt{all},
-    'help'   => \$opt{help},
+    'db=s'       => \$opt{db},
+    'kind=s'     => \$opt{kind},
+    'all'        => \$opt{all},
+    'version|V'  => \$opt{version},
+    'help'       => \$opt{help},
 ) or die "Bad arguments. Try --help.\n";
 
 exec('perldoc', $0) if $opt{help};
 
-my $cmd = shift @ARGV or die usage();
-my $bp  = Bioconda::Packages->new($opt{db} ? (db => $opt{db}) : ());
+my $cmd = $opt{version} ? 'version' : (shift @ARGV or die usage());
+
+# 'version' must work even if the database cannot be located.
+if ($cmd eq 'version') { cmd_version(); exit 0 }
+
+my $bp = Bioconda::Packages->new($opt{db} ? (db => $opt{db}) : ());
 
 my %dispatch = (
     info     => \&cmd_info,
@@ -57,7 +64,26 @@ my $handler = $dispatch{$cmd} or die "Unknown command '$cmd'.\n", usage();
 $handler->();
 
 sub usage {
-    return "Usage: bioconda-packages <info|deps|versions|search|rdeps|removed|list|stats> [args]\n";
+    return "Usage: bioconda-packages <info|deps|versions|search|rdeps|removed|list|stats|version> [args]\n";
+}
+
+sub cmd_version {
+    printf "bioconda-packages (Bioconda::Packages) %s\n",
+        Bioconda::Packages->VERSION // 'dev';
+    my $bp = eval { Bioconda::Packages->new($opt{db} ? (db => $opt{db}) : ()) };
+    if ($bp) {
+        my $m = $bp->meta;
+        printf "database version: %s\n", $m->{db_version} // '(unversioned)';
+        printf "database:         %s\n", $bp->db_path;
+        printf "  built from:     bioconda-recipes %s\n",
+            $m->{recipes_commit} // 'unknown';
+        printf "  generated at:   %s\n", $m->{generated_at}  // '-';
+        printf "  packages:       %s\n", $m->{package_count} // '-';
+        printf "  generator:      %s\n", $m->{generator}     // '-';
+    }
+    else {
+        print "database:         (not found)\n";
+    }
 }
 
 sub need_pkg {
@@ -118,10 +144,11 @@ sub cmd_list {
 
 sub cmd_stats {
     my %s = $bp->stats;
-    printf "Total packages:  %d\n", $s{total};
-    printf "Current:         %d\n", $s{current};
-    printf "Removed:         %d\n", $s{removed};
-    printf "noarch:          %d\n", $s{noarch};
-    printf "Generated at:    %s\n", $s{generated_at}   // '-';
-    printf "Recipes commit:  %s\n", $s{recipes_commit} // '-';
+    printf "Database version: %s\n", $s{db_version} // '(unversioned)';
+    printf "Total packages:   %d\n", $s{total};
+    printf "Current:          %d\n", $s{current};
+    printf "Removed:          %d\n", $s{removed};
+    printf "noarch:           %d\n", $s{noarch};
+    printf "Generated at:     %s\n", $s{generated_at}   // '-';
+    printf "Recipes commit:   %s\n", $s{recipes_commit} // '-';
 }

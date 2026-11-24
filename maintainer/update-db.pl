@@ -31,6 +31,7 @@ database from a bioconda-recipes clone.
     --api            Enrich with published versions & downloads from anaconda.org
     --api-sleep SEC  Pause between API calls (default: 0)
     --limit N        Process at most N recipes (for testing)
+    --force          Bump the version and rewrite even if nothing changed
     --quiet          Suppress progress output
     --help           This message
 
@@ -40,9 +41,12 @@ The full workflow this implements:
     2. parse every recipes/<name>/meta.yaml
     3. merge with the existing database, flagging vanished packages as removed
     4. (optional) enrich from anaconda.org
-    5. write the database atomically
+    5. write the database atomically - but ONLY if the semantic content changed;
+       an unchanged rebuild keeps the same version and leaves the file untouched
+       (use --force to override).
 
-After a successful rebuild, commit the regenerated JSON before releasing.
+After a rebuild that changed the data, commit the regenerated JSON before
+releasing.
 
 =cut
 
@@ -53,6 +57,7 @@ my %opt = (
     api       => 0,
     api_sleep => 0,
     limit     => undef,
+    force     => 0,
     quiet     => 0,
 );
 
@@ -63,6 +68,7 @@ GetOptions(
     'api!'        => \$opt{api},
     'api-sleep=f' => \$opt{api_sleep},
     'limit=i'     => \$opt{limit},
+    'force'       => \$opt{force},
     'quiet'       => \$opt{quiet},
     'help'        => \$opt{help},
 ) or die "Error in arguments. Try --help.\n";
@@ -80,6 +86,7 @@ my $up = Bioconda::Packages::Updater->new(
     api       => $opt{api},
     api_sleep => $opt{api_sleep},
     limit     => $opt{limit},
+    force     => $opt{force},
     verbose   => !$opt{quiet},
 );
 
@@ -93,6 +100,8 @@ my $report = $up->build;
 
 print "\n";
 printf "Database:        %s\n", $report->{db_path};
+printf "DB version:      %s%s\n", $report->{db_version},
+    ($report->{changed} ? '' : '  (unchanged - not rewritten)');
 printf "Recipes seen:    %d\n", $report->{recipes_seen};
 printf "Total packages:  %d\n", $report->{total};
 printf "  added:         %d\n", $report->{added};

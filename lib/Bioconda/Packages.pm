@@ -86,6 +86,16 @@ The database C<meta> hashref (generation time, commit, counts).
 sub db_path { $_[0]{db_path} }
 sub meta    { $_[0]{data}{meta} || {} }
 
+=head2 db_version
+
+The database snapshot version, a CalVer/SemVer string like C<2026.11.1>
+(year.month.progressive). Sortable under SemVer rules. Returns C<undef> for a
+database built before versions were stamped.
+
+=cut
+
+sub db_version { $_[0]{data}{meta}{db_version} }
+
 =head2 exists
 
     $bp->exists('samtools');
@@ -250,6 +260,7 @@ sub stats {
         current        => $total - $removed,
         removed        => $removed,
         noarch         => $noarch,
+        db_version     => $self->meta->{db_version},
         generated_at   => $self->meta->{generated_at},
         recipes_commit => $self->meta->{recipes_commit},
     );

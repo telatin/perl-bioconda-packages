@@ -16,3 +16,4 @@ t/01-parser.t
 t/02-db.t
 t/03-query.t
 t/04-shipped-db.t
+t/05-version.t

@@ -54,8 +54,13 @@ optional anaconda.org enrichment.
 Options: C<repo> (path to the bioconda-recipes clone, required for L</build>),
 C<db> (output JSON path; defaults to the located bundled db), C<api> (enable
 anaconda.org enrichment), C<api_sleep> (seconds between API calls, default 0),
-C<limit> (process at most N recipes, for testing), C<verbose>, and C<log> (a
-code ref called with log lines; defaults to printing to STDERR when verbose).
+C<limit> (process at most N recipes, for testing), C<force> (bump the version
+and rewrite even when the content is unchanged), C<verbose>, and C<log> (a code
+ref called with log lines; defaults to printing to STDERR when verbose).
+
+The version only advances, and the database file is only rewritten, when the
+semantic package content actually changed (see L</build>). Volatile fields
+(timestamps, download counts) are excluded from that comparison.
 
 =cut
 
@@ -67,6 +72,7 @@ sub new {
         api       => $opt{api}       || 0,
         api_sleep => $opt{api_sleep} || 0,
         limit     => $opt{limit},
+        force     => $opt{force}     || 0,
         verbose   => $opt{verbose}   || 0,
         log       => $opt{log},
     };
@@ -138,11 +144,17 @@ sub build {
 
     my $db_path = Bioconda::Packages::DB->locate_db($self->{db});
 
-    # Load previous db (if any) for removed-flag continuity.
+    # Load previous db (if any) for removed-flag continuity and to advance the
+    # progressive database version.
     my $old = {};
+    my ($old_version, $old_sig);
     if (-f $db_path) {
         my $prev = eval { Bioconda::Packages::DB->load($db_path) };
-        $old = $prev->{packages} if $prev && ref $prev->{packages} eq 'HASH';
+        if ($prev && ref $prev->{packages} eq 'HASH') {
+            $old = $prev->{packages};
+            $old_version = $prev->{meta}{db_version};
+            $old_sig     = $prev->{meta}{content_sha};
+        }
     }
 
     my $now = _now_iso();
@@ -241,8 +253,20 @@ sub build {
     }
 
     my $removed_total = grep { $new{$_}{is_removed} } keys %new;
+
+    # Bump the version only when the semantic content actually changed. The
+    # signature deliberately ignores volatile fields (timestamps, download
+    # counts) so a no-op rebuild neither bumps the version nor rewrites the file.
+    my $sig = _content_signature(\%new);
+    my $unchanged = (!$self->{force}
+                     && defined $old_sig && $old_sig eq $sig && -f $db_path)
+                    ? 1 : 0;
+    my $db_version = $unchanged ? $old_version : _next_db_version($old_version);
+
     my $data = {
         meta => {
+            db_version     => $db_version,
+            content_sha    => $sig,
             generated_at   => $now,
             generator      => "Bioconda::Packages::Updater $VERSION",
             recipes_commit => $self->repo_commit,
@@ -254,7 +278,9 @@ sub build {
         packages => \%new,
     };
 
-    Bioconda::Packages::DB->save($db_path, $data);
+    # Skip rewriting an unchanged database so the file (and its git state) stays
+    # byte-identical.
+    Bioconda::Packages::DB->save($db_path, $data) unless $unchanged;
 
     my $report = {
         added          => $added,
@@ -268,10 +294,19 @@ sub build {
         total          => scalar(keys %new),
         recipes_seen   => $n_recipes,
         db_path        => $db_path,
+        db_version     => $db_version,
+        changed        => $unchanged ? 0 : 1,
     };
-    $self->_log(sprintf
-        "Built %d packages (%d added, %d updated, %d newly-removed, %d reappeared, %d parse warnings) -> %s",
-        $report->{total}, $added, $updated, $removed, $reappeared, $n_warn, $db_path);
+    if ($unchanged) {
+        $self->_log(sprintf
+            "No content changes; database stays at version %s (not rewritten).",
+            $db_version);
+    }
+    else {
+        $self->_log(sprintf
+            "Built %d packages as db version %s (%d added, %d updated, %d newly-removed, %d reappeared, %d parse warnings) -> %s",
+            $report->{total}, $db_version, $added, $updated, $removed, $reappeared, $n_warn, $db_path);
+    }
     return $report;
 }
 
@@ -370,6 +405,39 @@ sub _sort_versions {
 }
 
 sub _now_iso { strftime('%Y-%m-%dT%H:%M:%SZ', gmtime) }
+
+# A stable hash of the semantically meaningful package data, used to decide
+# whether a rebuild is a real change. Volatile fields (timestamps, download
+# counts) are excluded so a no-op rebuild produces the same signature.
+sub _content_signature {
+    my ($pkgs) = @_;
+    require Digest::SHA;
+    my @volatile = qw(first_seen last_seen removed_at downloads);
+    my %reduced;
+    for my $key (keys %$pkgs) {
+        my %rec = %{ $pkgs->{$key} };    # shallow copy; nested refs are read-only
+        delete @rec{@volatile};
+        $reduced{$key} = \%rec;
+    }
+    my $json = JSON::PP->new->utf8->canonical->encode(\%reduced);
+    return Digest::SHA::sha256_hex($json);
+}
+
+# CalVer-style database version: YYYY.M.N (a valid 3-part SemVer, so it sorts
+# under SemVer/numeric rules). N is a progressive counter that resets each month
+# and increments on every rebuild within the same year+month. Uses UTC to match
+# generated_at.
+sub _next_db_version {
+    my ($prev) = @_;
+    my @t = gmtime;
+    my $year  = $t[5] + 1900;
+    my $month = $t[4] + 1;
+    my $patch = 1;
+    if (defined $prev && $prev =~ /^(\d+)\.(\d+)\.(\d+)$/) {
+        $patch = $3 + 1 if "$1.$2" eq "$year.$month";
+    }
+    return "$year.$month.$patch";
+}
 
 # JSON booleans so they round-trip as true/false, not 1/0/"".
 sub JSON_true  { JSON::PP::true()  }

@@ -57,6 +57,8 @@ my %stats    = $bp->stats;
 | `reverse_dependencies($dep, kind => run\|host\|build\|all)` | Who depends on `$dep`. |
 | `removed` | Names flagged as removed. |
 | `stats` | Summary counts + db provenance. |
+| `db_version` | Database snapshot version, e.g. `2026.11.1`. |
+| `meta` | Raw db provenance hashref. |
 
 ### Package object (`Bioconda::Packages::Package`)
 
@@ -75,7 +77,24 @@ bioconda-packages search aligner
 bioconda-packages rdeps zlib              # --kind run|host|build|all
 bioconda-packages removed
 bioconda-packages stats
+bioconda-packages version                 # tool + database version (also --version, -V)
 ```
+
+### Tool version vs database version
+
+The **tool version** (`Bioconda::Packages->VERSION`, e.g. `0.01`) is the code/API
+version. The **database version** is a separate, data-only CalVer string
+`YEAR.MONTH.N` (e.g. `2026.11.1`), where `N` is a progressive counter that resets
+each month. It is a valid 3-part SemVer, so it sorts correctly under
+SemVer/numeric rules (`2026.11.10 > 2026.11.2`) — compare it component-wise, not
+as a plain string. Get it with `bioconda-packages version`, `$bp->db_version`, or
+`$bp->meta->{recipes_commit}` for the exact source commit.
+
+The counter advances **only when the package data actually changes**: a rebuild
+that produces identical content keeps the same version and leaves the database
+file untouched (volatile fields — timestamps and download counts — are excluded
+from the comparison via a stored content hash). Use `update-db.pl --force` to
+bump and rewrite regardless.
 
 ## Maintainer workflow: rebuilding the database
 
@@ -110,6 +129,7 @@ Useful options:
 --api            Enrich with published versions & download counts from anaconda.org
 --api-sleep SEC  Throttle API calls
 --limit N        Process only the first N recipes (for testing)
+--force          Bump the version and rewrite even if nothing changed
 ```
 
 > **`--api` requires HTTPS support**: install `IO::Socket::SSL` and `Net::SSLeay`

@@ -10,6 +10,7 @@ plan skip_all => "No bundled database available: $@" unless $bp;
 
 my %s = $bp->stats;
 cmp_ok($s{total}, '>', 1000, 'bundled db has many packages');
+like($bp->db_version, qr/^\d{4}\.\d{1,2}\.\d+$/, 'bundled db has a version string');
 ok($bp->exists('samtools'), 'samtools present in bundled db');
 
 my $p = $bp->get('samtools');
