@@ -1,5 +1,9 @@
 Revision history for Bioconda-Packages
 
+0.1.0 2026-11-25
+      - Upgraded pipelines
+      - Semantic version
+
 0.01  2026-11-24
       - Initial release.
       - Offline, read-only query API (Bioconda::Packages) over a bundled,

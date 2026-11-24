@@ -20,7 +20,7 @@ jobs:
     name: Build and publish to CPAN
 
     permissions:
-      contents: write   # push updated db + create release
+      contents: write   # push updated files + create release
 
     steps:
       - uses: actions/checkout@v4
@@ -49,8 +49,7 @@ jobs:
           [ "${{ inputs.force }}" = "true" ] && ARGS="$ARGS --force"
           perl -Ilib maintainer/update-db.pl $ARGS
 
-      # Detect whether the rebuild actually changed the file. All subsequent
-      # steps that touch git / CPAN are skipped when nothing changed.
+      # Set DB_VERSION and DB_CHANGED outputs for all subsequent steps.
       - name: Check if database changed
         id: db
         run: |
@@ -79,20 +78,57 @@ jobs:
       # -----------------------------------------------------------------------
       # Everything below only runs when the database actually changed
       # -----------------------------------------------------------------------
+
+      # Bump $VERSION in Packages.pm to the DB CalVer and prepend a Changes entry.
+      # Both checks (before + after) make the step fail loudly if the substitution
+      # doesn't land exactly where expected.
+      - name: Bump module version
+        if: steps.db.outputs.changed == 'true'
+        run: |
+          DB_VER="${{ steps.db.outputs.version }}"
+          TODAY=$(date -u +%Y-%m-%d)
+
+          # Sanity-check: the VERSION line must exist before we touch anything.
+          grep -qP "^our \\\$VERSION = '[^']+';$" lib/Bioconda/Packages.pm \
+            || { echo "ERROR: could not find VERSION line in Packages.pm"; exit 1; }
+
+          # Rewrite the version in-place.
+          perl -i -pe "s/^our \\\$VERSION = '[^']+';/our \\\$VERSION = '$DB_VER';/" \
+            lib/Bioconda/Packages.pm
+
+          # Verify the new value is exactly what we expect.
+          grep -qP "^our \\\$VERSION = '$DB_VER';$" lib/Bioconda/Packages.pm \
+            || { echo "ERROR: version bump failed — check Packages.pm"; exit 1; }
+
+          echo "VERSION bumped to $DB_VER"
+
+          # Prepend a new entry to Changes (insert before the first existing entry,
+          # i.e. before line 3, right after the blank line that follows the header).
+          perl -i -pe "
+            print \"$DB_VER  $TODAY\n      - Database update: rebuilt from bioconda-recipes \$ENV{RECIPES_SHA}.\n\n\"
+              if \$. == 3;
+          " Changes
+
+          echo "Changes updated"
+
       - name: make dist
         if: steps.db.outputs.changed == 'true'
         run: |
+          # Regenerate Makefile so it picks up the bumped VERSION.
+          perl Makefile.PL
           make dist
           TARBALL=$(ls Bioconda-Packages-*.tar.gz | sort -V | tail -1)
           echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
 
-      - name: Commit updated database
+      - name: Commit release files
         if: steps.db.outputs.changed == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add share/bioconda-packages.json.gz
-          git commit -m "chore: update bundled database to ${{ steps.db.outputs.version }} (recipes ${{ env.RECIPES_SHA }})"
+          git add share/bioconda-packages.json.gz \
+                  lib/Bioconda/Packages.pm \
+                  Changes
+          git commit -m "release: ${{ steps.db.outputs.version }} (recipes ${{ env.RECIPES_SHA }})"
           git push
 
       - name: Create GitHub release
@@ -100,10 +136,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TOOL_VERSION=$(perl -Ilib -MBioconda::Packages -e 'print $Bioconda::Packages::VERSION')
           TAG="db-${{ steps.db.outputs.version }}"
           gh release create "$TAG" "${{ env.TARBALL }}" \
-            --title "Bioconda::Packages $TOOL_VERSION  —  db ${{ steps.db.outputs.version }}" \
+            --title "Bioconda::Packages ${{ steps.db.outputs.version }}" \
             --notes "DB version \`${{ steps.db.outputs.version }}\` built from bioconda-recipes \`${{ env.RECIPES_SHA }}\`." \
             --latest
 
