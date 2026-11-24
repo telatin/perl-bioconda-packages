@@ -283,6 +283,12 @@ L<Bioconda::Packages::RecipeParser>, L<https://bioconda.github.io>.
 
 Andrea Telatin
 
+=head1 LICENSE
+
+This is free software; you can redistribute it and/or modify it under the
+same terms as Perl 5 itself. See L<perlartistic> and L<perlgpl> for the
+license terms.
+
 =cut
 
 1;
