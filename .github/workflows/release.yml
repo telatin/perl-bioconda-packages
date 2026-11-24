@@ -1,0 +1,116 @@
+name: release
+
+on:
+  schedule:
+    - cron: '0 7 1 * *'   # 07:00 UTC on the 1st of every month
+  workflow_dispatch:
+    inputs:
+      api:
+        description: 'Enrich database from anaconda.org (--api)'
+        type: boolean
+        default: false
+      force:
+        description: 'Bump db version even if content unchanged (--force)'
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    name: Build and publish to CPAN
+
+    permissions:
+      contents: write   # push updated db + create release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.40'
+
+      # -----------------------------------------------------------------------
+      # Clone bioconda-recipes
+      # -----------------------------------------------------------------------
+      - name: Clone bioconda-recipes
+        run: |
+          git clone --depth 1 https://github.com/bioconda/bioconda-recipes bioconda-recipes
+          echo "RECIPES_SHA=$(git -C bioconda-recipes rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # Rebuild the database
+      # -----------------------------------------------------------------------
+      - name: Rebuild database
+        run: |
+          ARGS="--repo bioconda-recipes --no-pull"
+          [ "${{ inputs.api }}"   = "true" ] && ARGS="$ARGS --api"
+          [ "${{ inputs.force }}" = "true" ] && ARGS="$ARGS --force"
+          perl -Ilib maintainer/update-db.pl $ARGS
+
+      # Detect whether the rebuild actually changed the file. All subsequent
+      # steps that touch git / CPAN are skipped when nothing changed.
+      - name: Check if database changed
+        id: db
+        run: |
+          DB_VERSION=$(perl -Ilib -MBioconda::Packages -e 'print Bioconda::Packages->new->db_version')
+          echo "version=$DB_VERSION" >> "$GITHUB_OUTPUT"
+
+          if git diff --quiet share/bioconda-packages.json.gz; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Database unchanged at $DB_VERSION — skipping release."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Database changed → new version $DB_VERSION"
+          fi
+
+      # -----------------------------------------------------------------------
+      # Build and test (always — catches regressions even on a no-op rebuild)
+      # -----------------------------------------------------------------------
+      - name: Build
+        run: |
+          perl Makefile.PL
+          make
+
+      - name: Test
+        run: make test
+
+      # -----------------------------------------------------------------------
+      # Everything below only runs when the database actually changed
+      # -----------------------------------------------------------------------
+      - name: make dist
+        if: steps.db.outputs.changed == 'true'
+        run: |
+          make dist
+          TARBALL=$(ls Bioconda-Packages-*.tar.gz | sort -V | tail -1)
+          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
+
+      - name: Commit updated database
+        if: steps.db.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add share/bioconda-packages.json.gz
+          git commit -m "chore: update bundled database to ${{ steps.db.outputs.version }} (recipes ${{ env.RECIPES_SHA }})"
+          git push
+
+      - name: Create GitHub release
+        if: steps.db.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TOOL_VERSION=$(perl -Ilib -MBioconda::Packages -e 'print $Bioconda::Packages::VERSION')
+          TAG="db-${{ steps.db.outputs.version }}"
+          gh release create "$TAG" "${{ env.TARBALL }}" \
+            --title "Bioconda::Packages $TOOL_VERSION  —  db ${{ steps.db.outputs.version }}" \
+            --notes "DB version \`${{ steps.db.outputs.version }}\` built from bioconda-recipes \`${{ env.RECIPES_SHA }}\`." \
+            --latest
+
+      - name: Upload to CPAN
+        if: steps.db.outputs.changed == 'true'
+        uses: perl-actions/cpan-upload@2c797abe394ff90d193b45f955a05bf0e359ccec
+        with:
+          username: ${{ secrets.PAUSE_USERNAME }}
+          password: ${{ secrets.PAUSE_PASSWORD }}
+          file:     ${{ env.TARBALL }}
