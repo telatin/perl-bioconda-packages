@@ -1,5 +1,10 @@
 # Bioconda::Packages
 
+[![CPAN Version](https://img.shields.io/cpan/v/Bioconda-Packages)](https://metacpan.org/dist/Bioconda-Packages)
+![CPAN License](https://img.shields.io/cpan/l/Bioconda-Packages)
+[![test](https://github.com/telatin/perl-bioconda-packages/actions/workflows/ci.yml/badge.svg)](https://github.com/telatin/perl-bioconda-packages/actions/workflows/ci.yml)
+
+
 Query a bundled, offline snapshot of [Bioconda](https://bioconda.github.io)
 package metadata from Perl — versions, dependencies, licenses, summaries and
 homepage/URLs — with no network access at query time.
