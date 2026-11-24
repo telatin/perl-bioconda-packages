@@ -142,10 +142,13 @@ jobs:
             --notes "DB version \`${{ steps.db.outputs.version }}\` built from bioconda-recipes \`${{ env.RECIPES_SHA }}\`." \
             --latest
 
+      - name: Install CPAN::Uploader
+        if: steps.db.outputs.changed == 'true'
+        run: cpanm --quiet --notest CPAN::Uploader
+
       - name: Upload to CPAN
         if: steps.db.outputs.changed == 'true'
-        uses: perl-actions/cpan-upload@2c797abe394ff90d193b45f955a05bf0e359ccec
-        with:
-          username: ${{ secrets.PAUSE_USERNAME }}
-          password: ${{ secrets.PAUSE_PASSWORD }}
-          file:     ${{ env.TARBALL }}
+        env:
+          PAUSE_USERNAME: ${{ secrets.PAUSE_USERNAME }}
+          PAUSE_PASSWORD: ${{ secrets.PAUSE_PASSWORD }}
+        run: cpan-upload -u "$PAUSE_USERNAME" -p "$PAUSE_PASSWORD" "${{ env.TARBALL }}"
