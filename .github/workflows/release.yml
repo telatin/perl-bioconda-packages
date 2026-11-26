@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       api:
-        description: 'Enrich database from anaconda.org (--api)'
+        description: 'Enrich database from anaconda.org (--api) — scheduled runs always enable this'
         type: boolean
         default: false
       force:
@@ -45,7 +45,11 @@ jobs:
       - name: Rebuild database
         run: |
           ARGS="--repo bioconda-recipes --no-pull"
-          [ "${{ inputs.api }}"   = "true" ] && ARGS="$ARGS --api"
+          # --api is always on for the scheduled (cron) run; for manual runs it
+          # stays opt-in via the workflow_dispatch input.
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.api }}" = "true" ]; then
+            ARGS="$ARGS --api"
+          fi
           [ "${{ inputs.force }}" = "true" ] && ARGS="$ARGS --force"
           perl -Ilib maintainer/update-db.pl $ARGS
 
@@ -120,6 +124,28 @@ jobs:
           TARBALL=$(ls Bioconda-Packages-*.tar.gz | sort -V | tail -1)
           echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
 
+      # -----------------------------------------------------------------------
+      # Upload to CPAN BEFORE committing/pushing/releasing.
+      #
+      # This is the one step that can fail transiently (PAUSE down, network).
+      # If it fails here, nothing has been committed yet, so the working tree is
+      # still dirty and a plain re-run rebuilds and retries. Because the CalVer
+      # patch number is derived from the *committed* DB (which we haven't touched),
+      # the re-run produces the identical version and tarball — the retry is
+      # idempotent. If this ran after the commit instead, a failure would leave an
+      # uploaded-nowhere release committed on main, and the next run would see no
+      # DB change and silently skip the upload forever.
+      - name: Install CPAN::Uploader
+        if: steps.db.outputs.changed == 'true'
+        run: cpanm --quiet --notest CPAN::Uploader
+
+      - name: Upload to CPAN
+        if: steps.db.outputs.changed == 'true'
+        env:
+          PAUSE_USERNAME: ${{ secrets.PAUSE_USERNAME }}
+          PAUSE_PASSWORD: ${{ secrets.PAUSE_PASSWORD }}
+        run: cpan-upload -u "$PAUSE_USERNAME" -p "$PAUSE_PASSWORD" "${{ env.TARBALL }}"
+
       - name: Commit release files
         if: steps.db.outputs.changed == 'true'
         run: |
@@ -141,14 +167,3 @@ jobs:
             --title "Bioconda::Packages ${{ steps.db.outputs.version }}" \
             --notes "DB version \`${{ steps.db.outputs.version }}\` built from bioconda-recipes \`${{ env.RECIPES_SHA }}\`." \
             --latest
-
-      - name: Install CPAN::Uploader
-        if: steps.db.outputs.changed == 'true'
-        run: cpanm --quiet --notest CPAN::Uploader
-
-      - name: Upload to CPAN
-        if: steps.db.outputs.changed == 'true'
-        env:
-          PAUSE_USERNAME: ${{ secrets.PAUSE_USERNAME }}
-          PAUSE_PASSWORD: ${{ secrets.PAUSE_PASSWORD }}
-        run: cpan-upload -u "$PAUSE_USERNAME" -p "$PAUSE_PASSWORD" "${{ env.TARBALL }}"
