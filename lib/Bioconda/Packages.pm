@@ -7,7 +7,7 @@ use Carp qw(croak);
 use Bioconda::Packages::DB      ();
 use Bioconda::Packages::Package ();
 
-our $VERSION = '2026.11.4';
+our $VERSION = '2026.11.5';
 
 =head1 NAME
 
