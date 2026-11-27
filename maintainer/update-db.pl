@@ -53,7 +53,7 @@ consumers can distinguish "never existed" from "was removed").
 version and total download count fetched from the anaconda.org JSON API.
 Requires L<IO::Socket::SSL> and L<Net::SSLeay>.
 
-=item 5. B<Write> the database atomically — but B<only> if the semantic content
+=item 5. B<Write> the database atomically - but B<only> if the semantic content
 changed. Volatile fields (C<first_seen>, C<last_seen>, C<downloads>) are
 excluded from the content-hash comparison, so a rebuild that produces identical
 metadata keeps the same CalVer and leaves the file untouched. Use C<--force>
